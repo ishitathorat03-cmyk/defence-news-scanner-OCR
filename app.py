@@ -16,24 +16,106 @@ st.set_page_config(
 st.title("🛡️ Defence News Scanner OCR")
 st.write("Upload a newspaper image or PDF and extract defence-related news using OCR.")
 
-KEYWORDS = [
-    "army", "military", "defence", "defense", "navy",
-    "air force", "missile", "border", "soldier", "drone",
-    "security", "weapon", "operation", "armed forces",
-    "ministry of defence", "indian army", "indian navy",
-    "iaf", "military exercise", "bsf", "crpf", "paramilitary",
-    "aircraft", "fighter", "warship", "troops", "forces"
+DEFENCE_STRONG = [
+    "indian army",
+    "indian navy",
+    "indian air force",
+    "iaf",
+    "ministry of defence",
+    "defence ministry",
+    "armed forces",
+    "military exercise",
+    "naval exercise",
+    "army exercise",
+    "air force exercise",
+    "defence deal",
+    "defence forces",
+    "military operation",
+    "military deployment",
+    "military training"
 ]
 
-def is_defence_line(line):
-    line_lower = line.lower()
-    return any(keyword in line_lower for keyword in KEYWORDS)
+DEFENCE_SPECIFIC = [
+    "missile",
+    "warship",
+    "fighter aircraft",
+    "military aircraft",
+    "aircraft carrier",
+    "submarine",
+    "frigate",
+    "destroyer",
+    "military helicopter",
+    "army regiment",
+    "battalion",
+    "military base",
+    "military command",
+    "defence procurement",
+    "defence equipment",
+    "border forces",
+    "troops",
+    "soldiers",
+    "bsf",
+    "crpf",
+    "coast guard",
+    "paramilitary"
+]
+
+DEFENCE_CONTEXT = [
+    "operation",
+    "exercise",
+    "deployment",
+    "training",
+    "procurement",
+    "security",
+    "border",
+    "troops",
+    "forces",
+    "command",
+    "regiment",
+    "battalion",
+    "aircraft",
+    "warship",
+    "missile",
+    "military",
+    "defence",
+    "defense"
+]
+
+
+def defence_score(text):
+
+    t = text.lower()
+
+    strong = sum(
+        1 for word in DEFENCE_STRONG
+        if word in t
+    )
+
+    specific = sum(
+        1 for word in DEFENCE_SPECIFIC
+        if word in t
+    )
+
+    context = sum(
+        1 for word in DEFENCE_CONTEXT
+        if word in t
+    )
+
+    score = (
+        strong * 4
+        + specific * 2
+        + context
+    )
+
+    return score
+
 
 def extract_defence_articles(text):
+
     lines = [
         re.sub(r"\s+", " ", line).strip()
         for line in text.splitlines()
-        if line.strip()
+        if len(line.strip()) > 15
     ]
 
     articles = []
@@ -41,35 +123,43 @@ def extract_defence_articles(text):
 
     for line in lines:
 
-        if is_defence_line(line):
-            current.append(line)
+        current.append(line)
 
-        elif current:
-            if len(line) > 15:
-                current.append(line)
+        block = " ".join(current)
 
-            if len(current) >= 4:
-                articles.append(" ".join(current))
-                current = []
+        score = defence_score(block)
 
-    if current:
-        articles.append(" ".join(current))
+        # Strong defence article
+        if score >= 7:
 
-    # Remove very short/duplicate results
-    cleaned = []
+            articles.append(block)
+            current = []
+
+        # Avoid collecting unrelated newspaper content
+        elif len(current) >= 10:
+
+            current = []
+
+    # Remove duplicates and very small results
+
+    final_articles = []
     seen = set()
 
     for article in articles:
+
         article = article.strip()
 
-        if len(article) >= 50:
-            key = article[:150].lower()
+        if len(article) < 80:
+            continue
 
-            if key not in seen:
-                seen.add(key)
-                cleaned.append(article)
+        key = article[:150].lower()
 
-    return cleaned
+        if key not in seen:
+
+            seen.add(key)
+            final_articles.append(article)
+
+    return final_articles
 
 
 file = st.file_uploader(
