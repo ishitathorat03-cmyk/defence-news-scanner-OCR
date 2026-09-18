@@ -2,9 +2,8 @@ import streamlit as st
 from PIL import Image
 import pytesseract
 import fitz
-import re
 import pandas as pd
-from langdetect import detect
+import re
 
 pytesseract.pytesseract.tesseract_cmd = "tesseract"
 
@@ -17,26 +16,76 @@ st.set_page_config(
 st.title("🛡️ Defence News Scanner OCR")
 st.write("Upload a newspaper image or PDF and extract defence-related news using OCR.")
 
+KEYWORDS = [
+    "army", "military", "defence", "defense", "navy",
+    "air force", "missile", "border", "soldier", "drone",
+    "security", "weapon", "operation", "armed forces",
+    "ministry of defence", "indian army", "indian navy",
+    "iaf", "military exercise", "bsf", "crpf", "paramilitary",
+    "aircraft", "fighter", "warship", "troops", "forces"
+]
+
+def is_defence_line(line):
+    line_lower = line.lower()
+    return any(keyword in line_lower for keyword in KEYWORDS)
+
+def extract_defence_articles(text):
+    lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    articles = []
+    current = []
+
+    for line in lines:
+
+        if is_defence_line(line):
+            current.append(line)
+
+        elif current:
+            if len(line) > 15:
+                current.append(line)
+
+            if len(current) >= 4:
+                articles.append(" ".join(current))
+                current = []
+
+    if current:
+        articles.append(" ".join(current))
+
+    # Remove very short/duplicate results
+    cleaned = []
+    seen = set()
+
+    for article in articles:
+        article = article.strip()
+
+        if len(article) >= 50:
+            key = article[:150].lower()
+
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(article)
+
+    return cleaned
+
+
 file = st.file_uploader(
     "📂 Upload News File",
     type=["png", "jpg", "jpeg", "pdf"]
 )
 
-KEYWORDS = [
-    "army", "military", "defence", "defense", "navy",
-    "air force", "missile", "border", "soldier", "drone",
-    "security", "weapon", "operation", "armed forces",
-    "ministry of defence", "india", "military exercise",
-    "iaf", "indian army", "indian navy"
-]
-
 if file:
 
-    st.success(f"✅ File uploaded: {file.name}")
+    st.success("✅ File uploaded: " + file.name)
 
     text = ""
+    total_pages = 1
+    pages_scanned = 1
 
-    # IMAGE OCR
+    # IMAGE
     if file.type.startswith("image"):
 
         image = Image.open(file)
@@ -50,119 +99,124 @@ if file:
         with st.spinner("🔍 Extracting newspaper text..."):
             text = pytesseract.image_to_string(image)
 
-    # PDF OCR
+    # PDF
     elif file.type == "application/pdf":
 
-        with st.spinner("📄 Scanning newspaper PDF with OCR..."):
+        pdf_bytes = file.read()
 
-            pdf_bytes = file.read()
- doc = fitz.open(
-     stream=pdf_bytes,
-     filetype="pdf"
- )
+        doc = fitz.open(
+            stream=pdf_bytes,
+            filetype="pdf"
+        )
 
- pages_text = []
+        total_pages = len(doc)
 
- max_pages = st.number_input(
-     "📄 Pages to scan",
-     min_value=1,
-     max_value=len(doc),
-     value=len(doc)
- )
+        max_pages = st.number_input(
+            "📄 Pages to scan",
+            min_value=1,
+            max_value=total_pages,
+            value=total_pages,
+            step=1
+        )
 
- for page_number, page in enumerate(
-     list(doc)[:int(max_pages)],
-     start=1
- ):
+        pages_text = []
 
-                st.write(f"🔍 Scanning page {page_number}...")
+        progress = st.progress(0)
 
-                pix = page.get_pixmap(
-                    matrix=fitz.Matrix(1.3, 1.3)
-                )
+        for page_number, page in enumerate(
+            doc,
+            start=1
+        ):
 
-                img = Image.frombytes(
-                    "RGB",
-                    [pix.width, pix.height],
-                    pix.samples
-                )
+            if page_number > int(max_pages):
+                break
 
-                page_text = pytesseract.image_to_string(img)
+            st.write(
+                f"🔍 Scanning page {page_number} of {int(max_pages)}..."
+            )
 
-                pages_text.append(
-                    f"--- PAGE {page_number} ---\n{page_text}"
-                )
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(1.3, 1.3)
+            )
 
-            text = "\n\n".join(pages_text)
+            img = Image.frombytes(
+                "RGB",
+                [pix.width, pix.height],
+                pix.samples
+            )
+
+            page_text = pytesseract.image_to_string(img)
+
+            pages_text.append(
+                f"\n--- PAGE {page_number} ---\n{page_text}"
+            )
+
+            progress.progress(
+                page_number / int(max_pages)
+            )
+
+        pages_scanned = int(max_pages)
+        text = "\n".join(pages_text)
 
     # RESULTS
+
     if text.strip():
 
         st.divider()
 
-        st.header("📰 Extracted Newspaper News")
+        st.header("📰 Defence News Extracted")
 
-        st.text_area(
-            "Complete OCR Text",
-            text,
-            height=350
-        )
+        defence_articles = extract_defence_articles(text)
 
-        # Split OCR into lines
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if len(line.strip()) > 20
-        ]
-
-        defence_lines = []
-
-        for line in lines:
-
-            line_lower = line.lower()
-
-            matched = [
-                keyword
-                for keyword in KEYWORDS
-                if keyword in line_lower
-            ]
-
-            if matched:
-                defence_lines.append({
-                    "News / Content": line,
-                    "Detected Keywords": ", ".join(matched)
-                })
-
-        st.divider()
-
-        st.header("🛡️ Defence-Related News")
-
-        if defence_lines:
+        if defence_articles:
 
             st.success(
-                f"✅ {len(defence_lines)} defence-related news/content lines detected"
+                f"🛡️ {len(defence_articles)} defence-related news items extracted"
             )
 
-            df = pd.DataFrame(defence_lines)
-
-            st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.subheader("📌 News Headlines / Key Content")
-
-            for i, item in enumerate(defence_lines, start=1):
+            for number, article in enumerate(
+                defence_articles,
+                start=1
+            ):
 
                 st.markdown(
-                    f"**{i}. {item['News / Content']}**"
+                    f"### 📰 News {number}"
                 )
+
+                st.write(article)
+
+                st.divider()
+
+            # Download extracted defence news
+            download_text = "\n\n".join(
+                [
+                    f"NEWS {i}\n{article}"
+                    for i, article in enumerate(
+                        defence_articles,
+                        start=1
+                    )
+                ]
+            )
+
+            st.download_button(
+                "⬇️ Download Defence News",
+                download_text,
+                file_name="defence_news_extracted.txt",
+                mime="text/plain"
+            )
 
         else:
 
             st.warning(
-                "No defence-related news was detected in the scanned pages."
+                "No defence-related news was detected."
+            )
+
+        with st.expander("🔎 View Complete OCR Text"):
+
+            st.text_area(
+                "Complete Newspaper OCR",
+                text,
+                height=400
             )
 
         st.divider()
@@ -178,16 +232,16 @@ if file:
 
         col2.metric(
             "Pages Scanned",
-            int(max_pages)
+            pages_scanned
         )
 
         col3.metric(
-            "Defence Items",
-            len(defence_lines)
+            "Defence News",
+            len(defence_articles)
         )
 
     else:
 
         st.error(
-            "❌ No readable text was extracted from this file."
+            "❌ No readable text was extracted."
         )
