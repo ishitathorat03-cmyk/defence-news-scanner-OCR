@@ -115,7 +115,7 @@ def extract_defence_articles(text):
     lines = [
         re.sub(r"\s+", " ", line).strip()
         for line in text.splitlines()
-        if len(line.strip()) > 15
+        if len(line.strip()) > 8
     ]
 
     articles = []
@@ -129,19 +129,26 @@ def extract_defence_articles(text):
 
         score = defence_score(block)
 
-        # Strong defence article
+        # Accept even short defence articles
         if score >= 7:
-
             articles.append(block)
             current = []
 
-        # Avoid collecting unrelated newspaper content
-        elif len(current) >= 10:
+        # Don't allow one article to become huge
+        elif len(current) >= 7:
+            if defence_score(block) >= 4:
+                articles.append(block)
 
             current = []
 
-    # Remove duplicates and very small results
+    # Check remaining text
+    if current:
+        block = " ".join(current)
 
+        if defence_score(block) >= 4:
+            articles.append(block)
+
+    # Remove duplicates
     final_articles = []
     seen = set()
 
@@ -149,13 +156,13 @@ def extract_defence_articles(text):
 
         article = article.strip()
 
-        if len(article) < 80:
+        # MUCH lower minimum size
+        if len(article) < 25:
             continue
 
-        key = article[:150].lower()
+        key = article[:120].lower()
 
         if key not in seen:
-
             seen.add(key)
             final_articles.append(article)
 
