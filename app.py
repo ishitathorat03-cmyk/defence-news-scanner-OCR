@@ -1,11 +1,21 @@
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
+from pytesseract import Output
 import fitz
 import pandas as pd
 import re
 
+# =========================================================
+# TESSERACT
+# =========================================================
+
 pytesseract.pytesseract.tesseract_cmd = "tesseract"
+
+
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
     page_title="Defence News Scanner OCR",
@@ -13,52 +23,138 @@ st.set_page_config(
     layout="wide"
 )
 
+
+# =========================================================
+# TITLE
+# =========================================================
+
 st.title("🛡️ Defence News Scanner OCR")
-st.write("Upload a newspaper image or PDF and extract defence-related news using OCR.")
+
+st.write(
+    "Upload a newspaper image or PDF. "
+    "The system scans the complete material and extracts "
+    "defence-related news, including small articles."
+)
+
+
+# =========================================================
+# DEFENCE VOCABULARY
+# =========================================================
 
 DEFENCE_STRONG = [
     "indian army",
     "indian navy",
     "indian air force",
+    "air force",
     "iaf",
+    "indian armed forces",
+    "armed forces",
     "ministry of defence",
     "defence ministry",
-    "armed forces",
+    "defense ministry",
+    "defence forces",
+    "defense forces",
+    "military operation",
     "military exercise",
+    "military deployment",
+    "military training",
     "naval exercise",
     "army exercise",
     "air force exercise",
     "defence deal",
-    "defence forces",
+    "defense deal",
+    "defence procurement",
+    "defense procurement",
+    "defence equipment",
+    "defense equipment",
+    "counter terrorism",
+    "counter-terrorism",
+    "anti-terror operation",
+    "anti terror operation",
+    "terrorist attack",
+    "terrorist group",
+    "terrorist organisation",
+    "terrorist organization",
+    "militant group",
     "military operation",
-    "military deployment",
-    "military training"
+    "military strike"
 ]
+
 
 DEFENCE_SPECIFIC = [
     "missile",
+    "rockets",
+    "rocket system",
     "warship",
     "fighter aircraft",
+    "fighter jet",
     "military aircraft",
     "aircraft carrier",
     "submarine",
     "frigate",
     "destroyer",
     "military helicopter",
+    "helicopter",
     "army regiment",
+    "regiment",
     "battalion",
     "military base",
+    "air base",
+    "naval base",
     "military command",
-    "defence procurement",
+    "defence command",
+    "defense command",
     "defence equipment",
+    "defense equipment",
+    "defence technology",
+    "defense technology",
+    "weapons system",
+    "weapon system",
+    "ammunition",
+    "artillery",
+    "tank",
+    "armoured",
+    "armored",
+    "drone",
+    "uav",
+    "unmanned aerial vehicle",
+    "border security force",
     "border forces",
-    "troops",
-    "soldiers",
     "bsf",
     "crpf",
+    "itbp",
+    "cisf",
+    "sashastra seema bal",
     "coast guard",
-    "paramilitary"
+    "paramilitary",
+    "special forces",
+    "commando",
+    "troops",
+    "soldiers",
+    "military personnel",
+    "militants",
+    "terrorists",
+    "terrorist",
+    "terrorism",
+    "terror attack",
+    "terror attack",
+    "counterterrorism",
+    "insurgency",
+    "insurgent",
+    "cross border",
+    "cross-border",
+    "ceasefire",
+    "infiltration",
+    "infiltrators",
+    "line of control",
+    "loc",
+    "line of actual control",
+    "lac",
+    "military intelligence",
+    "intelligence agency",
+    "strategic forces"
 ]
+
 
 DEFENCE_CONTEXT = [
     "operation",
@@ -66,8 +162,10 @@ DEFENCE_CONTEXT = [
     "deployment",
     "training",
     "procurement",
-    "security",
+    "security forces",
+    "security personnel",
     "border",
+    "border security",
     "troops",
     "forces",
     "command",
@@ -78,47 +176,350 @@ DEFENCE_CONTEXT = [
     "missile",
     "military",
     "defence",
-    "defense"
+    "defense",
+    "soldiers",
+    "terrorist",
+    "terrorists",
+    "terrorism",
+    "militant",
+    "militants",
+    "counter terror",
+    "counter-terror",
+    "anti-terror",
+    "infiltration",
+    "army personnel",
+    "naval personnel",
+    "air force personnel"
 ]
 
 
+# =========================================================
+# NON-DEFENCE WORDS
+# These help reduce obvious false positives.
+# =========================================================
+
+NON_DEFENCE = [
+    "school admission",
+    "college admission",
+    "exam result",
+    "stock market",
+    "share market",
+    "real estate",
+    "movie review",
+    "film review",
+    "celebrity",
+    "fashion show",
+    "cricket match",
+    "football match",
+    "recipe",
+    "restaurant",
+    "wedding",
+    "horoscope",
+    "weather forecast",
+    "property prices",
+    "job fair",
+    "shopping",
+    "television serial"
+]
+
+
+# =========================================================
+# NORMALIZE OCR TEXT
+# =========================================================
+
+def normalize_text(text):
+
+    text = text.lower()
+
+    text = re.sub(
+        r"[^a-z0-9\s\-]",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+# =========================================================
+# DEFENCE SCORE
+# =========================================================
+
 def defence_score(text):
 
-    t = text.lower()
+    t = normalize_text(text)
 
-    strong = sum(
-        1 for word in DEFENCE_STRONG
+    strong_hits = [
+        word for word in DEFENCE_STRONG
         if word in t
-    )
+    ]
 
-    specific = sum(
-        1 for word in DEFENCE_SPECIFIC
+    specific_hits = [
+        word for word in DEFENCE_SPECIFIC
         if word in t
-    )
+    ]
 
-    context = sum(
-        1 for word in DEFENCE_CONTEXT
+    context_hits = [
+        word for word in DEFENCE_CONTEXT
         if word in t
-    )
+    ]
+
+    negative_hits = [
+        word for word in NON_DEFENCE
+        if word in t
+    ]
 
     score = (
-        strong * 4
-        + specific * 2
-        + context
+        len(strong_hits) * 6
+        + len(specific_hits) * 3
+        + len(context_hits)
+        - len(negative_hits) * 4
     )
 
     return score
 
 
-def extract_defence_articles(text):
+# =========================================================
+# CHECK IF ARTICLE IS DEFENCE RELATED
+# =========================================================
 
-    lines = [
-        re.sub(r"\s+", " ", line).strip()
-        for line in text.splitlines()
-        if len(line.strip()) > 8
+def is_defence_article(text):
+
+    t = normalize_text(text)
+
+    strong = any(
+        word in t
+        for word in DEFENCE_STRONG
+    )
+
+    specific_count = sum(
+        1
+        for word in DEFENCE_SPECIFIC
+        if word in t
+    )
+
+    context_count = sum(
+        1
+        for word in DEFENCE_CONTEXT
+        if word in t
+    )
+
+    negative_count = sum(
+        1
+        for word in NON_DEFENCE
+        if word in t
+    )
+
+    # Strong defence article
+    if strong and negative_count <= 1:
+        return True
+
+    # Multiple specific defence signals
+    if specific_count >= 2 and context_count >= 1:
+        return True
+
+    # Terrorism / counter-terrorism stories
+    terror_words = [
+        "terrorist",
+        "terrorists",
+        "terrorism",
+        "terror attack",
+        "militant",
+        "militants",
+        "insurgent",
+        "insurgency",
+        "counter terror",
+        "counter-terror",
+        "anti-terror"
     ]
 
+    terror_found = any(
+        word in t
+        for word in terror_words
+    )
+
+    security_words = [
+        "security forces",
+        "armed forces",
+        "troops",
+        "army personnel",
+        "military personnel",
+        "operation",
+        "captured",
+        "arrested",
+        "neutralised",
+        "neutralized"
+    ]
+
+    security_found = any(
+        word in t
+        for word in security_words
+    )
+
+    if terror_found and security_found:
+        return True
+
+    return False
+
+
+# =========================================================
+# IMAGE PREPROCESSING
+# =========================================================
+
+def preprocess_image(image):
+
+    image = image.convert("RGB")
+
+    # Increase resolution for small newspaper text
+    width, height = image.size
+
+    target_width = max(
+        width,
+        2500
+    )
+
+    if width < target_width:
+
+        scale = target_width / width
+
+        image = image.resize(
+            (
+                int(width * scale),
+                int(height * scale)
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+    # Grayscale
+    gray = image.convert("L")
+
+    # Improve contrast
+    gray = ImageEnhance.Contrast(gray).enhance(1.8)
+
+    # Slight sharpening
+    gray = gray.filter(
+        ImageFilter.SHARPEN
+    )
+
+    return gray
+
+
+# =========================================================
+# OCR
+# =========================================================
+
+def perform_ocr(image):
+
+    processed = preprocess_image(image)
+
+    config = (
+        "--oem 3 "
+        "--psm 3"
+    )
+
+    text = pytesseract.image_to_string(
+        processed,
+        config=config
+    )
+
+    return text
+
+
+# =========================================================
+# OCR WITH WORD POSITIONS
+# =========================================================
+
+def perform_layout_ocr(image):
+
+    processed = preprocess_image(image)
+
+    config = (
+        "--oem 3 "
+        "--psm 3"
+    )
+
+    data = pytesseract.image_to_data(
+        processed,
+        output_type=Output.DATAFRAME,
+        config=config
+    )
+
+    data = data.dropna(
+        subset=["text"]
+    )
+
+    data["text"] = data["text"].astype(str)
+
+    data = data[
+        data["text"].str.strip() != ""
+    ]
+
+    return data, processed
+
+
+# =========================================================
+# ARTICLE EXTRACTION
+# =========================================================
+
+def extract_defence_articles(text):
+
+    # Clean lines
+    raw_lines = text.splitlines()
+
+    lines = []
+
+    for line in raw_lines:
+
+        line = re.sub(
+            r"\s+",
+            " ",
+            line
+        ).strip()
+
+        if len(line) >= 3:
+            lines.append(line)
+
     articles = []
+
+    # -----------------------------------------------------
+    # Strategy 1:
+    # Sliding windows.
+    # This is important for small articles.
+    # -----------------------------------------------------
+
+    window_sizes = [
+        3,
+        4,
+        5,
+        6,
+        8
+    ]
+
+    for size in window_sizes:
+
+        for i in range(
+            0,
+            len(lines) - size + 1
+        ):
+
+            block = " ".join(
+                lines[i:i + size]
+            )
+
+            if is_defence_article(block):
+
+                articles.append(block)
+
+    # -----------------------------------------------------
+    # Strategy 2:
+    # Build larger blocks.
+    # -----------------------------------------------------
+
     current = []
 
     for line in lines:
@@ -127,62 +528,112 @@ def extract_defence_articles(text):
 
         block = " ".join(current)
 
-        score = defence_score(block)
+        if is_defence_article(block):
 
-        # Accept even short defence articles
-        if score >= 7:
             articles.append(block)
-            current = []
 
-        # Don't allow one article to become huge
-        elif len(current) >= 7:
-            if defence_score(block) >= 4:
-                articles.append(block)
+        # Prevent extremely large blocks
+        if len(current) >= 12:
 
             current = []
 
-    # Check remaining text
-    if current:
-        block = " ".join(current)
+    # -----------------------------------------------------
+    # Clean and deduplicate
+    # -----------------------------------------------------
 
-        if defence_score(block) >= 4:
-            articles.append(block)
-
-    # Remove duplicates
     final_articles = []
-    seen = set()
+
+    seen = []
 
     for article in articles:
 
-        article = article.strip()
+        article = re.sub(
+            r"\s+",
+            " ",
+            article
+        ).strip()
 
-        # MUCH lower minimum size
-        if len(article) < 25:
+        # Do NOT reject small articles aggressively
+        if len(article) < 20:
             continue
 
-        key = article[:120].lower()
+        # Deduplicate using similarity
+        duplicate = False
 
-        if key not in seen:
-            seen.add(key)
+        for old in seen:
+
+            shorter = min(
+                len(article),
+                len(old)
+            )
+
+            if shorter == 0:
+                continue
+
+            common = 0
+
+            words1 = set(
+                article.lower().split()
+            )
+
+            words2 = set(
+                old.lower().split()
+            )
+
+            if words1 and words2:
+
+                common = len(
+                    words1.intersection(words2)
+                ) / len(
+                    words1.union(words2)
+                )
+
+            if common > 0.70:
+                duplicate = True
+                break
+
+        if not duplicate:
+
+            seen.append(article)
             final_articles.append(article)
 
     return final_articles
 
 
+# =========================================================
+# FILE UPLOADER
+# =========================================================
+
 file = st.file_uploader(
     "📂 Upload News File",
-    type=["png", "jpg", "jpeg", "pdf"]
+    type=[
+        "png",
+        "jpg",
+        "jpeg",
+        "pdf"
+    ]
 )
+
+
+# =========================================================
+# PROCESS FILE
+# =========================================================
 
 if file:
 
-    st.success("✅ File uploaded: " + file.name)
+    st.success(
+        "✅ File uploaded: " + file.name
+    )
 
     text = ""
+
     total_pages = 1
     pages_scanned = 1
 
+    # =====================================================
     # IMAGE
+    # =====================================================
+
     if file.type.startswith("image"):
 
         image = Image.open(file)
@@ -193,10 +644,16 @@ if file:
             use_container_width=True
         )
 
-        with st.spinner("🔍 Extracting newspaper text..."):
-            text = pytesseract.image_to_string(image)
+        with st.spinner(
+            "🔍 Reading newspaper image..."
+        ):
 
+            text = perform_ocr(image)
+
+    # =====================================================
     # PDF
+    # =====================================================
+
     elif file.type == "application/pdf":
 
         pdf_bytes = file.read()
@@ -207,6 +664,10 @@ if file:
         )
 
         total_pages = len(doc)
+
+        st.info(
+            f"📑 PDF contains {total_pages} pages."
+        )
 
         max_pages = st.number_input(
             "📄 Pages to scan",
@@ -229,116 +690,182 @@ if file:
                 break
 
             st.write(
-                f"🔍 Scanning page {page_number} of {int(max_pages)}..."
+                f"🔍 Scanning page "
+                f"{page_number} of "
+                f"{int(max_pages)}..."
             )
 
+            # HIGHER RESOLUTION
             pix = page.get_pixmap(
-                matrix=fitz.Matrix(1.3, 1.3)
+                matrix=fitz.Matrix(
+                    2.5,
+                    2.5
+                )
             )
 
             img = Image.frombytes(
                 "RGB",
-                [pix.width, pix.height],
+                [
+                    pix.width,
+                    pix.height
+                ],
                 pix.samples
             )
 
-            page_text = pytesseract.image_to_string(img)
+            page_text = perform_ocr(
+                img
+            )
 
             pages_text.append(
-                f"\n--- PAGE {page_number} ---\n{page_text}"
+                f"\n--- PAGE {page_number} ---\n"
+                f"{page_text}"
             )
 
             progress.progress(
-                page_number / int(max_pages)
+                page_number /
+                int(max_pages)
             )
 
-        pages_scanned = int(max_pages)
-        text = "\n".join(pages_text)
+        pages_scanned = int(
+            max_pages
+        )
 
-    # RESULTS
+        text = "\n".join(
+            pages_text
+        )
 
-    if text.strip():
 
-        st.divider()
+# =========================================================
+# RESULTS
+# =========================================================
 
-        st.header("📰 Defence News Extracted")
+if file and text.strip():
 
-        defence_articles = extract_defence_articles(text)
+    st.divider()
 
-        if defence_articles:
+    st.header(
+        "📰 Defence News Extracted"
+    )
 
-            st.success(
-                f"🛡️ {len(defence_articles)} defence-related news items extracted"
+    defence_articles = (
+        extract_defence_articles(text)
+    )
+
+    # =====================================================
+    # DEFENCE NEWS FOUND
+    # =====================================================
+
+    if defence_articles:
+
+        st.success(
+            f"🛡️ {len(defence_articles)} "
+            f"defence-related news items detected"
+        )
+
+        for number, article in enumerate(
+            defence_articles,
+            start=1
+        ):
+
+            st.markdown(
+                f"### 📰 News {number}"
             )
 
-            for number, article in enumerate(
-                defence_articles,
-                start=1
-            ):
+            score = defence_score(
+                article
+            )
 
-                st.markdown(
-                    f"### 📰 News {number}"
+            st.caption(
+                f"Defence relevance score: {score}"
+            )
+
+            st.write(
+                article
+            )
+
+            st.divider()
+
+        # =================================================
+        # DOWNLOAD
+        # =================================================
+
+        download_text = "\n\n".join(
+            [
+                f"NEWS {i}\n{article}"
+                for i, article in enumerate(
+                    defence_articles,
+                    start=1
                 )
-
-                st.write(article)
-
-                st.divider()
-
-            # Download extracted defence news
-            download_text = "\n\n".join(
-                [
-                    f"NEWS {i}\n{article}"
-                    for i, article in enumerate(
-                        defence_articles,
-                        start=1
-                    )
-                ]
-            )
-
-            st.download_button(
-                "⬇️ Download Defence News",
-                download_text,
-                file_name="defence_news_extracted.txt",
-                mime="text/plain"
-            )
-
-        else:
-
-            st.warning(
-                "No defence-related news was detected."
-            )
-
-        with st.expander("🔎 View Complete OCR Text"):
-
-            st.text_area(
-                "Complete Newspaper OCR",
-                text,
-                height=400
-            )
-
-        st.divider()
-
-        st.subheader("📊 Scanner Status")
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "OCR Engine",
-            "Tesseract"
+            ]
         )
 
-        col2.metric(
-            "Pages Scanned",
-            pages_scanned
+        st.download_button(
+            "⬇️ Download Defence News",
+            download_text,
+            file_name=(
+                "defence_news_extracted.txt"
+            ),
+            mime="text/plain"
         )
 
-        col3.metric(
-            "Defence News",
-            len(defence_articles)
-        )
+    # =====================================================
+    # NOTHING FOUND
+    # =====================================================
 
     else:
 
-        st.error(
-            "❌ No readable text was extracted."
+        st.warning(
+            "⚠️ No defence-related news was detected."
         )
+
+        st.info(
+            "The OCR text is shown below so you can "
+            "check whether the newspaper text was read correctly."
+        )
+
+    # =====================================================
+    # OCR TEXT
+    # =====================================================
+
+    with st.expander(
+        "🔎 View Complete OCR Text"
+    ):
+
+        st.text_area(
+            "Complete Newspaper OCR",
+            text,
+            height=500
+        )
+
+    # =====================================================
+    # STATUS
+    # =====================================================
+
+    st.divider()
+
+    st.subheader(
+        "📊 Scanner Status"
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "OCR Engine",
+        "Tesseract"
+    )
+
+    col2.metric(
+        "Pages Scanned",
+        pages_scanned
+    )
+
+    col3.metric(
+        "Defence News",
+        len(defence_articles)
+    )
+
+elif file:
+
+    st.error(
+        "❌ No readable text was extracted."
+    )
