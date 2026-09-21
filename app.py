@@ -417,10 +417,7 @@ def perform_ocr(image):
 
     processed = preprocess_image(image)
 
-    config = (
-        "--oem 3 "
-        "--psm 3"
-    )
+    config = "--oem 3 --psm 3"
 
     text = pytesseract.image_to_string(
         processed,
@@ -468,7 +465,10 @@ def perform_layout_ocr(image):
 
 def extract_defence_articles(text):
 
-    # Clean lines
+    # =====================================================
+    # CLEAN OCR TEXT
+    # =====================================================
+
     raw_lines = text.splitlines()
 
     lines = []
@@ -484,68 +484,92 @@ def extract_defence_articles(text):
         if len(line) >= 3:
             lines.append(line)
 
+
+    # =====================================================
+    # STEP 1
+    # FIND DEFENCE-RELATED AREAS
+    # =====================================================
+
+    defence_indexes = []
+
+    for i, line in enumerate(lines):
+
+        if is_defence_article(line):
+
+            defence_indexes.append(i)
+
+
+    # =====================================================
+    # STEP 2
+    # GROUP NEIGHBOURING LINES
+    #
+    # Lines close to each other are treated as one article.
+    # =====================================================
+
+    groups = []
+
+    if defence_indexes:
+
+        current_group = [
+            defence_indexes[0]
+        ]
+
+        for index in defence_indexes[1:]:
+
+            previous = current_group[-1]
+
+            # Newspaper article lines are normally
+            # close together in OCR output.
+            if index - previous <= 5:
+
+                current_group.append(index)
+
+            else:
+
+                groups.append(
+                    current_group
+                )
+
+                current_group = [
+                    index
+                ]
+
+        groups.append(
+            current_group
+        )
+
+
+    # =====================================================
+    # STEP 3
+    # EXPAND EACH GROUP
+    #
+    # If a defence line is found, include the surrounding
+    # article lines instead of returning only that line.
+    # =====================================================
+
     articles = []
 
-    # -----------------------------------------------------
-    # Strategy 1:
-    # Sliding windows.
-    # This is important for small articles.
-    # -----------------------------------------------------
+    for group in groups:
 
-    window_sizes = [
-        3,
-        4,
-        5,
-        6,
-        8
-    ]
+        first = min(group)
+        last = max(group)
 
-    for size in window_sizes:
-
-        for i in range(
+        # Expand around detected defence content
+        start = max(
             0,
-            len(lines) - size + 1
-        ):
+            first - 3
+        )
 
-            block = " ".join(
-                lines[i:i + size]
-            )
+        end = min(
+            len(lines),
+            last + 4
+        )
 
-            if is_defence_article(block):
+        article_lines = lines[start:end]
 
-                articles.append(block)
-
-    # -----------------------------------------------------
-    # Strategy 2:
-    # Build larger blocks.
-    # -----------------------------------------------------
-
-    current = []
-
-    for line in lines:
-
-        current.append(line)
-
-        block = " ".join(current)
-
-        if is_defence_article(block):
-
-            articles.append(block)
-
-        # Prevent extremely large blocks
-        if len(current) >= 12:
-
-            current = []
-
-    # -----------------------------------------------------
-    # Clean and deduplicate
-    # -----------------------------------------------------
-
-    final_articles = []
-
-    seen = []
-
-    for article in articles:
+        article = " ".join(
+            article_lines
+        )
 
         article = re.sub(
             r"\s+",
@@ -553,49 +577,146 @@ def extract_defence_articles(text):
             article
         ).strip()
 
-        # Do NOT reject small articles aggressively
+
+        # =================================================
+        # ONLY KEEP ACTUAL DEFENCE ARTICLES
+        # =================================================
+
+        if is_defence_article(article):
+
+            articles.append(
+                article
+            )
+
+
+    # =====================================================
+    # STEP 4
+    # MERGE OVERLAPPING ARTICLES
+    #
+    # This prevents:
+    #
+    # Line 1 → News 1
+    # Line 2 → News 2
+    # Line 3 → News 3
+    #
+    # from the SAME newspaper article.
+    # =====================================================
+
+    merged_articles = []
+
+    for article in articles:
+
+        article_words = set(
+            normalize_text(article).split()
+        )
+
+        merged = False
+
+        for i, existing in enumerate(
+            merged_articles
+        ):
+
+            existing_words = set(
+                normalize_text(existing).split()
+            )
+
+            if not article_words or not existing_words:
+                continue
+
+            intersection = (
+                article_words.intersection(
+                    existing_words
+                )
+            )
+
+            union = (
+                article_words.union(
+                    existing_words
+                )
+            )
+
+            similarity = (
+                len(intersection)
+                / len(union)
+            )
+
+            # Same article
+            if similarity >= 0.35:
+
+                merged_articles[i] = (
+                    existing + " " + article
+                )
+
+                merged = True
+                break
+
+
+        if not merged:
+
+            merged_articles.append(
+                article
+            )
+
+
+    # =====================================================
+    # STEP 5
+    # REMOVE DUPLICATES
+    # =====================================================
+
+    final_articles = []
+
+    for article in merged_articles:
+
+        article = re.sub(
+            r"\s+",
+            " ",
+            article
+        ).strip()
+
         if len(article) < 20:
             continue
 
-        # Deduplicate using similarity
         duplicate = False
 
-        for old in seen:
+        article_words = set(
+            normalize_text(article).split()
+        )
 
-            shorter = min(
-                len(article),
-                len(old)
+        for existing in final_articles:
+
+            existing_words = set(
+                normalize_text(existing).split()
             )
 
-            if shorter == 0:
+            if not article_words or not existing_words:
                 continue
 
-            common = 0
-
-            words1 = set(
-                article.lower().split()
-            )
-
-            words2 = set(
-                old.lower().split()
-            )
-
-            if words1 and words2:
-
-                common = len(
-                    words1.intersection(words2)
-                ) / len(
-                    words1.union(words2)
+            overlap = (
+                len(
+                    article_words.intersection(
+                        existing_words
+                    )
                 )
+                /
+                len(
+                    article_words.union(
+                        existing_words
+                    )
+                )
+            )
 
-            if common > 0.70:
+            if overlap >= 0.55:
+
                 duplicate = True
                 break
 
+
         if not duplicate:
 
-            seen.append(article)
-            final_articles.append(article)
+            final_articles.append(
+                article
+            )
+
 
     return final_articles
 
