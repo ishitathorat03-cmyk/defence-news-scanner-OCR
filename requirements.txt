@@ -1,6 +1,7 @@
 streamlit
-PyMuPDF
-langdetect
-pandas
 pytesseract
 Pillow
+PyMuPDF
+pandas
+langdetect
+feedparser
