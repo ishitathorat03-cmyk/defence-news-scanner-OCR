@@ -1,13 +1,16 @@
 import streamlit as st
 import feedparser
 import hashlib
-import sqlite3
 import re
 from datetime import datetime
 
-# =========================================================
+from database import init_database, insert_news, get_news
+from sources import get_languages, get_sources
+
+
+# ==========================================================
 # PAGE CONFIG
-# =========================================================
+# ==========================================================
 
 st.set_page_config(
     page_title="Defence News Intelligence",
@@ -15,66 +18,49 @@ st.set_page_config(
     layout="wide"
 )
 
-# =========================================================
+# ==========================================================
 # DATABASE
-# =========================================================
-
-DB_NAME = "defence_news.db"
-
-
-def init_database():
-    conn = sqlite3.connect(DB_NAME)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS news (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            summary TEXT,
-            source TEXT,
-            url TEXT,
-            published TEXT,
-            category TEXT,
-            relevance INTEGER,
-            fetched_at TEXT
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
+# ==========================================================
 
 init_database()
 
-# =========================================================
-# NEWS SOURCES
-# =========================================================
 
-NEWS_SOURCES = {
+# ==========================================================
+# RSS SOURCES
+# ==========================================================
 
-    "PIB India": [
-        "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1"
-    ],
+RSS_SOURCES = {
 
-    "Google News - Defence India": [
-        "https://news.google.com/rss/search?q=defence+India&hl=en-IN&gl=IN&ceid=IN:en"
-    ],
+    "PIB": {
+        "language": "English",
+        "url": "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1"
+    },
 
-    "Google News - Indian Army": [
-        "https://news.google.com/rss/search?q=Indian+Army&hl=en-IN&gl=IN&ceid=IN:en"
-    ],
+    "Google News - Defence India": {
+        "language": "English",
+        "url": "https://news.google.com/rss/search?q=defence+India&hl=en-IN&gl=IN&ceid=IN:en"
+    },
 
-    "Google News - Indian Navy": [
-        "https://news.google.com/rss/search?q=Indian+Navy&hl=en-IN&gl=IN&ceid=IN:en"
-    ],
+    "Google News - Indian Army": {
+        "language": "English",
+        "url": "https://news.google.com/rss/search?q=Indian+Army&hl=en-IN&gl=IN&ceid=IN:en"
+    },
 
-    "Google News - Indian Air Force": [
-        "https://news.google.com/rss/search?q=Indian+Air+Force&hl=en-IN&gl=IN&ceid=IN:en"
-    ]
+    "Google News - Indian Navy": {
+        "language": "English",
+        "url": "https://news.google.com/rss/search?q=Indian+Navy&hl=en-IN&gl=IN&ceid=IN:en"
+    },
+
+    "Google News - Indian Air Force": {
+        "language": "English",
+        "url": "https://news.google.com/rss/search?q=Indian+Air+Force&hl=en-IN&gl=IN&ceid=IN:en"
+    }
 }
 
-# =========================================================
-# DEFENCE CLASSIFICATION
-# =========================================================
+
+# ==========================================================
+# DEFENCE KEYWORDS
+# ==========================================================
 
 DEFENCE_KEYWORDS = {
 
@@ -82,6 +68,7 @@ DEFENCE_KEYWORDS = {
         "indian army",
         "army",
         "soldier",
+        "soldiers",
         "troops",
         "military exercise",
         "army exercise",
@@ -122,7 +109,8 @@ DEFENCE_KEYWORDS = {
         "radar",
         "defence research",
         "military technology",
-        "defence system"
+        "defence system",
+        "weapon system"
     ],
 
     "Defence Policy": [
@@ -148,39 +136,9 @@ DEFENCE_KEYWORDS = {
 }
 
 
-def analyse_article(title, summary):
-
-    text = f"{title} {summary}".lower()
-
-    category_scores = {}
-
-    for category, keywords in DEFENCE_KEYWORDS.items():
-
-        score = 0
-
-        for keyword in keywords:
-
-            if keyword in text:
-                score += 1
-
-        category_scores[category] = score
-
-    best_category = max(
-        category_scores,
-        key=category_scores.get
-    )
-
-    score = category_scores[best_category]
-
-    # Convert to relevance percentage
-    relevance = min(score * 20, 100)
-
-    return best_category, relevance
-
-
-# =========================================================
-# CLEAN TEXT
-# =========================================================
+# ==========================================================
+# TEXT CLEANING
+# ==========================================================
 
 def clean_text(text):
 
@@ -202,362 +160,488 @@ def clean_text(text):
     return text.strip()
 
 
-# =========================================================
-# FETCH RSS
-# =========================================================
+# ==========================================================
+# ARTICLE ANALYSIS
+# ==========================================================
 
-def fetch_news():
+def analyse_article(title, summary):
 
-    all_articles = []
+    text = (
+        f"{title} {summary}"
+    ).lower()
 
-    for source_name, feeds in NEWS_SOURCES.items():
+    category_scores = {}
 
-        for feed_url in feeds:
+    for category, keywords in DEFENCE_KEYWORDS.items():
 
-            try:
+        score = 0
 
-                feed = feedparser.parse(feed_url)
+        for keyword in keywords:
 
-                for entry in feed.entries[:30]:
+            if keyword in text:
+                score += 1
 
-                    title = clean_text(
-                        entry.get("title", "")
-                    )
+        category_scores[
+            category
+        ] = score
 
-                    summary = clean_text(
-                        entry.get(
-                            "summary",
-                            entry.get(
-                                "description",
-                                ""
-                            )
-                        )
-                    )
+    best_category = max(
+        category_scores,
+        key=category_scores.get
+    )
 
-                    url = entry.get(
-                        "link",
-                        ""
-                    )
+    score = category_scores[
+        best_category
+    ]
 
-                    published = entry.get(
-                        "published",
-                        entry.get(
-                            "updated",
-                            ""
-                        )
-                    )
+    relevance = min(
+        score * 20,
+        100
+    )
 
-                    if not title:
-                        continue
-
-                    category, relevance = analyse_article(
-                        title,
-                        summary
-                    )
-
-                    # Only keep defence-related articles
-                    if relevance < 20:
-                        continue
-
-                    unique_string = (
-                        title.lower()
-                        + source_name
-                    )
-
-                    article_id = hashlib.sha256(
-                        unique_string.encode(
-                            "utf-8"
-                        )
-                    ).hexdigest()
-
-                    all_articles.append({
-
-                        "id": article_id,
-
-                        "title": title,
-
-                        "summary": summary,
-
-                        "source": source_name,
-
-                        "url": url,
-
-                        "published": published,
-
-                        "category": category,
-
-                        "relevance": relevance
-
-                    })
-
-            except Exception:
-                continue
-
-    return all_articles
+    return (
+        best_category,
+        relevance
+    )
 
 
-# =========================================================
-# SAVE NEWS
-# =========================================================
+# ==========================================================
+# FETCH RSS NEWS
+# ==========================================================
 
-def save_news(articles):
+def fetch_rss_news():
 
-    conn = sqlite3.connect(DB_NAME)
+    collected = []
 
-    new_count = 0
-
-    for article in articles:
+    for source, config in RSS_SOURCES.items():
 
         try:
 
-            conn.execute("""
-                INSERT INTO news
-                (
-                    id,
-                    title,
-                    summary,
-                    source,
-                    url,
-                    published,
-                    category,
-                    relevance,
-                    fetched_at
+            feed = feedparser.parse(
+                config["url"]
+            )
+
+            for entry in feed.entries[:40]:
+
+                title = clean_text(
+                    entry.get(
+                        "title",
+                        ""
+                    )
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
 
-                article["id"],
-                article["title"],
-                article["summary"],
-                article["source"],
-                article["url"],
-                article["published"],
-                article["category"],
-                article["relevance"],
-                datetime.now().isoformat()
+                summary = clean_text(
+                    entry.get(
+                        "summary",
+                        entry.get(
+                            "description",
+                            ""
+                        )
+                    )
+                )
 
-            ))
+                article_url = entry.get(
+                    "link",
+                    ""
+                )
 
-            new_count += 1
+                published = entry.get(
+                    "published",
+                    entry.get(
+                        "updated",
+                        ""
+                    )
+                )
 
-        except sqlite3.IntegrityError:
+                if not title:
+                    continue
 
-            # Already exists
-            pass
+                category, relevance = (
+                    analyse_article(
+                        title,
+                        summary
+                    )
+                )
 
-    conn.commit()
-    conn.close()
+                if relevance < 20:
+                    continue
 
-    return new_count
+                article_id = hashlib.sha256(
+                    (
+                        title.lower()
+                        + source
+                    ).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+
+                article = {
+
+                    "id": article_id,
+
+                    "title": title,
+
+                    "content": summary,
+
+                    "summary": summary,
+
+                    "source": source,
+
+                    "language": config[
+                        "language"
+                    ],
+
+                    "published_date": (
+                        published[:25]
+                        if published
+                        else datetime.now().strftime(
+                            "%Y-%m-%d"
+                        )
+                    ),
+
+                    "category": category,
+
+                    "relevance": relevance,
+
+                    "source_type": "RSS",
+
+                    "source_url": config[
+                        "url"
+                    ],
+
+                    "article_url": article_url
+                }
+
+                collected.append(
+                    article
+                )
+
+        except Exception:
+            continue
+
+    return collected
 
 
-# =========================================================
-# LOAD DATABASE
-# =========================================================
+# ==========================================================
+# SAVE ARTICLES
+# ==========================================================
 
-def load_news():
+def save_articles(articles):
 
-    conn = sqlite3.connect(DB_NAME)
+    count = 0
 
-    rows = conn.execute("""
-        SELECT
-            title,
-            summary,
-            source,
-            url,
-            published,
-            category,
-            relevance
-        FROM news
-        ORDER BY rowid DESC
-    """).fetchall()
+    for article in articles:
 
-    conn.close()
-
-    return rows
-
-
-# =========================================================
-# HEADER
-# =========================================================
-
-st.title("🛡️ Defence News Intelligence")
-
-st.caption(
-    "Automatically collecting and analysing defence-related news"
-)
-
-# =========================================================
-# FETCH BUTTON
-# =========================================================
-
-col1, col2 = st.columns([1, 5])
-
-with col1:
-
-    refresh = st.button(
-        "🔄 Fetch Latest News",
-        use_container_width=True
-    )
-
-if refresh:
-
-    with st.spinner(
-        "🌐 Fetching latest news..."
-    ):
-
-        articles = fetch_news()
-
-        new_count = save_news(
-            articles
+        before = len(
+            get_news()
         )
 
+        insert_news(
+            article
+        )
+
+        after = len(
+            get_news()
+        )
+
+        if after > before:
+            count += 1
+
+    return count
+
+
+# ==========================================================
+# HEADER
+# ==========================================================
+
+st.title(
+    "🛡️ Defence News Intelligence"
+)
+
+st.write(
+    "Multilingual defence news collection, "
+    "analysis and searchable archive."
+)
+
+
+# ==========================================================
+# FETCH
+# ==========================================================
+
+if st.button(
+    "🔄 Fetch Latest News",
+    type="primary"
+):
+
+    with st.spinner(
+        "🌐 Collecting latest defence news..."
+    ):
+
+        articles = fetch_rss_news()
+
+        new_articles = 0
+
+        for article in articles:
+
+            insert_news(
+                article
+            )
+
+            new_articles += 1
+
     st.success(
-        f"✅ Fetch completed — {new_count} new articles added."
+        f"✅ Collection completed. "
+        f"{new_articles} articles processed."
     )
 
-# =========================================================
-# LOAD DATA
-# =========================================================
 
-news = load_news()
+# ==========================================================
+# LOAD DATABASE
+# ==========================================================
 
-# =========================================================
-# DASHBOARD METRICS
-# =========================================================
+all_news = get_news()
 
-st.divider()
 
-total_news = len(news)
+# ==========================================================
+# FILTER VALUES
+# ==========================================================
 
-categories = set()
-
-for item in news:
-
-    categories.add(
-        item[5]
+languages_available = sorted(
+    list(
+        set(
+            row[5]
+            for row in all_news
+            if row[5]
+        )
     )
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "📰 Total Defence News",
-    total_news
 )
 
-col2.metric(
-    "📂 Categories",
-    len(categories)
+sources_available = sorted(
+    list(
+        set(
+            row[4]
+            for row in all_news
+            if row[4]
+        )
+    )
 )
 
-col3.metric(
-    "🔄 Data Mode",
-    "Live RSS"
+dates_available = sorted(
+    list(
+        set(
+            row[6]
+            for row in all_news
+            if row[6]
+        )
+    ),
+    reverse=True
 )
 
-# =========================================================
-# FILTERS
-# =========================================================
+categories_available = sorted(
+    list(
+        set(
+            row[7]
+            for row in all_news
+            if row[7]
+        )
+    )
+)
+
+
+# ==========================================================
+# FILTER PANEL
+# ==========================================================
 
 st.divider()
 
 st.subheader(
-    "🔎 Defence News"
+    "🔎 Search Defence News"
 )
 
 col1, col2 = st.columns(2)
 
 with col1:
 
-    search = st.text_input(
-        "Search news",
-        placeholder="Army, Navy, DRDO..."
+    selected_language = st.selectbox(
+        "🌐 Language",
+        ["All"] + languages_available
     )
 
 with col2:
 
-    category_options = [
-        "All"
-    ] + sorted(
-        list(categories)
+    selected_source = st.selectbox(
+        "📰 Newspaper / Source",
+        ["All"] + sources_available
     )
+
+
+col3, col4 = st.columns(2)
+
+with col3:
+
+    selected_date = st.selectbox(
+        "📅 Date",
+        ["All"] + dates_available
+    )
+
+with col4:
 
     selected_category = st.selectbox(
-        "Category",
-        category_options
+        "🛡️ Defence Category",
+        ["All"] + categories_available
     )
 
-# =========================================================
-# DISPLAY
-# =========================================================
 
-shown = 0
+search_text = st.text_input(
+    "🔍 Search within articles",
+    placeholder="Army, missile, DRDO, Navy..."
+)
 
-for item in news:
 
-    title = item[0]
-    summary = item[1]
-    source = item[2]
-    url = item[3]
-    published = item[4]
-    category = item[5]
-    relevance = item[6]
+# ==========================================================
+# FILTER DATABASE
+# ==========================================================
 
-    searchable_text = (
-        title + " " + summary
-    ).lower()
+filtered_news = []
 
-    if search:
+for row in all_news:
 
-        if search.lower() not in searchable_text:
+    language = row[5]
+    source = row[4]
+    date = row[6]
+    category = row[7]
+
+    if (
+        selected_language != "All"
+        and language != selected_language
+    ):
+        continue
+
+    if (
+        selected_source != "All"
+        and source != selected_source
+    ):
+        continue
+
+    if (
+        selected_date != "All"
+        and date != selected_date
+    ):
+        continue
+
+    if (
+        selected_category != "All"
+        and category != selected_category
+    ):
+        continue
+
+    if search_text:
+
+        searchable = (
+            str(row[1])
+            + " "
+            + str(row[2])
+        ).lower()
+
+        if (
+            search_text.lower()
+            not in searchable
+        ):
             continue
 
-    if selected_category != "All":
+    filtered_news.append(
+        row
+    )
 
-        if category != selected_category:
-            continue
 
-    shown += 1
+# ==========================================================
+# DASHBOARD METRICS
+# ==========================================================
 
-    with st.container():
+st.divider()
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric(
+    "📰 Total Articles",
+    len(all_news)
+)
+
+c2.metric(
+    "🔎 Matching",
+    len(filtered_news)
+)
+
+c3.metric(
+    "🌐 Languages",
+    len(languages_available)
+)
+
+c4.metric(
+    "📰 Sources",
+    len(sources_available)
+)
+
+
+# ==========================================================
+# RESULTS
+# ==========================================================
+
+st.divider()
+
+st.subheader(
+    "📰 Defence News"
+)
+
+if not filtered_news:
+
+    st.info(
+        "No matching defence news found. "
+        "Click 'Fetch Latest News' first."
+    )
+
+else:
+
+    for row in filtered_news:
+
+        (
+            article_id,
+            title,
+            content,
+            summary,
+            source,
+            language,
+            published_date,
+            category,
+            relevance,
+            source_type,
+            source_url,
+            article_url
+        ) = row
 
         st.markdown(
             f"### 📰 {title}"
         )
 
         st.caption(
-            f"📌 {source}  |  "
-            f"📅 {published}  |  "
+            f"🌐 {language}  |  "
+            f"📰 {source}  |  "
+            f"📅 {published_date}  |  "
             f"🏷️ {category}  |  "
-            f"🎯 Relevance: {relevance}%"
+            f"🎯 {relevance}% relevance"
         )
 
-        if summary:
+        if content:
 
             st.write(
-                summary
+                content
             )
 
-        if url:
+        if article_url:
 
             st.markdown(
-                f"[🔗 Read Original Source]({url})"
+                f"[🔗 Read Original Article]"
+                f"({article_url})"
             )
 
         st.divider()
-
-
-if shown == 0:
-
-    st.info(
-        "No matching defence news found."
-    )
-
-# =========================================================
-# FOOTER
-# =========================================================
-
-st.caption(
-    "Defence News Intelligence System • "
-    "Automated source ingestion + defence relevance analysis"
-)
