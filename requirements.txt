@@ -1,7 +1,9 @@
 streamlit
+feedparser
+requests
+beautifulsoup4
 pytesseract
 Pillow
 PyMuPDF
 pandas
 langdetect
-feedparser
